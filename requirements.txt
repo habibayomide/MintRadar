@@ -1,0 +1,6 @@
+requests
+python-dotenv
+beautifulsoup4
+flask
+curl_cffi
+websockets

@@ -1,0 +1,10 @@
+.env
+projects.json
+projects.json.lock
+seen_opensea_collections.json
+eth_mint_watcher_state.json
+discover.log
+__pycache__/
+*.pyc
+.venv/
+venv/

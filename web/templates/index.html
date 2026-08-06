@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>MintRadar</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+
+</head>
+
+
+<body>
+
+    <header>
+
+        <div class="logo">
+
+            🚨 MintRadar
+
+        </div>
+
+        <div class="subtitle">
+
+            NFT Mint Discovery Dashboard
+
+        </div>
+
+    </header>
+
+
+    <main>
+
+
+        <section class="stats">
+
+            <div class="stat-card">
+
+                <span>Total Projects</span>
+
+                <strong>
+
+                    {{ projects|length }}
+
+                </strong>
+
+            </div>
+
+
+            <div class="stat-card">
+
+                <span>Upcoming</span>
+
+                <strong>
+
+                    {{ projects|selectattr("status", "equalto", "upcoming")|list|length }}
+
+                </strong>
+
+            </div>
+
+
+            <div class="stat-card">
+
+                <span>Live</span>
+
+                <strong>
+
+                    {{ projects|selectattr("status", "equalto", "live")|list|length }}
+
+                </strong>
+
+            </div>
+
+        </section>
+
+
+        <section class="filters">
+
+            <form method="GET">
+
+
+                <input
+
+                    type="text"
+
+                    name="search"
+
+                    placeholder="Search projects..."
+
+                    value="{{ selected_search }}"
+
+
+                >
+
+
+                <select name="status">
+
+                    <option value="all">
+
+                        All Statuses
+
+                    </option>
+
+
+                    <option
+
+                        value="upcoming"
+
+                        {% if selected_status == "upcoming" %}
+
+                        selected
+
+                        {% endif %}
+
+                    >
+
+                        Upcoming
+
+                    </option>
+
+
+                    <option
+
+                        value="live"
+
+                        {% if selected_status == "live" %}
+
+                        selected
+
+                        {% endif %}
+
+                    >
+
+                        Live
+
+                    </option>
+
+
+                    <option
+
+                        value="unknown"
+
+                        {% if selected_status == "unknown" %}
+
+                        selected
+
+                        {% endif %}
+
+                    >
+
+                        Unknown
+
+                    </option>
+
+                </select>
+
+
+                <select name="source">
+
+                    <option value="all">
+
+                        All Sources
+
+                    </option>
+
+
+                    {% for item in sources %}
+
+                    <option
+
+                        value="{{ item }}"
+
+                        {% if selected_source == item %}
+
+                        selected
+
+                        {% endif %}
+
+                    >
+
+                        {{ item }}
+
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+
+                <select name="blockchain">
+
+                    <option value="all">
+
+                        All Blockchains
+
+                    </option>
+
+
+                    {% for item in blockchains %}
+
+                    <option
+
+                        value="{{ item }}"
+
+                        {% if selected_blockchain == item %}
+
+                        selected
+
+                        {% endif %}
+
+                    >
+
+                        {{ item }}
+
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+
+                <button type="submit">
+
+                    Filter
+
+                </button>
+
+
+                <a href="/">
+
+                    Reset
+
+                </a>
+
+
+            </form>
+
+        </section>
+
+
+        <section class="projects">
+
+
+            {% if projects %}
+
+
+                {% for project in projects %}
+
+
+                <article class="project-card">
+
+
+                    <div class="project-header">
+
+
+                        <h2>
+
+                            {{ project.get("name", "Unknown Project") }}
+
+                        </h2>
+
+
+                        <span class="status
+
+                            {{ project.get("status", "unknown") }}">
+
+                            {{ project.get("status", "unknown")|upper }}
+
+                        </span>
+
+
+                    </div>
+
+
+                    <p class="description">
+
+                        {{ project.get("description", "No description available.") }}
+
+                    </p>
+
+
+                    <div class="details">
+
+
+                        <span>
+
+                            📡 {{ project.get("source", "Unknown") }}
+
+                        </span>
+
+
+                        <span>
+
+                            ⛓️ {{ project.get("blockchain", "Unknown") }}
+
+                        </span>
+
+
+                        <span>
+
+                            💰 {{ project.get("price", "Unknown") }}
+
+                        </span>
+
+
+                        <span>
+
+                            📅 {{ project.get("launch_datetime", "Unknown") }}
+
+                        </span>
+
+
+                    </div>
+
+
+                    {% if project.get("url") %}
+
+
+                    <a
+
+                        class="view-button"
+
+                        href="{{ project.get('url') }}"
+
+                        target="_blank"
+
+                    >
+
+                        View Project →
+
+                    </a>
+
+
+                    {% endif %}
+
+
+                </article>
+
+
+                {% endfor %}
+
+
+            {% else %}
+
+
+                <div class="empty">
+
+                    No projects match your filters.
+
+                </div>
+
+
+            {% endif %}
+
+
+        </section>
+
+
+    </main>
+
+
+</body>
+
+</html>
