@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from sources.nftcalendar import (
@@ -12,7 +13,9 @@ from status import get_project_status
 from alerts import send_discord_alert
 
 
-DATA_FILE = Path("projects.json")
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_FILE = DATA_DIR / "projects.json"
 
 
 def load_existing_projects():

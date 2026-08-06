@@ -1,8 +1,10 @@
 import json
+import os
 from pathlib import Path
 
 
-DATA_FILE = Path("projects.json")
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_FILE = DATA_DIR / "projects.json"
 
 
 def load_projects():

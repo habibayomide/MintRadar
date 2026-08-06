@@ -67,9 +67,11 @@ ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 WS_URL = f"wss://stream-api.opensea.io/socket/websocket?token={OPENSEA_API_KEY}"
 HEARTBEAT_INTERVAL = 30  # seconds, per OpenSea's docs
 
-SEEN_FILE = Path("seen_opensea_collections.json")
-DATA_FILE = Path("projects.json")
-LOCK_FILE = Path("projects.json.lock")
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SEEN_FILE = DATA_DIR / "seen_opensea_collections.json"
+DATA_FILE = DATA_DIR / "projects.json"
+LOCK_FILE = DATA_DIR / "projects.json.lock"
 
 RECONNECT_BASE_DELAY = 5  # seconds
 RECONNECT_MAX_DELAY = 300  # seconds

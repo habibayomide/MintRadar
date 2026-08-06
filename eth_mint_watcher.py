@@ -91,9 +91,11 @@ TRANSFER_SIG = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3
 TRANSFER_SINGLE_SIG = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62"
 NAME_FUNCTION_SELECTOR = "0x06fdde03"  # keccak256("name()")[:4]
 
-STATE_FILE = Path("eth_mint_watcher_state.json")
-DATA_FILE = Path("projects.json")
-LOCK_FILE = Path("projects.json.lock")
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+STATE_FILE = DATA_DIR / "eth_mint_watcher_state.json"
+DATA_FILE = DATA_DIR / "projects.json"
+LOCK_FILE = DATA_DIR / "projects.json.lock"
 
 
 CHAINS = [
