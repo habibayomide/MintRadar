@@ -57,6 +57,8 @@ import requests
 import websockets
 from dotenv import load_dotenv
 
+from heartbeat import write_heartbeat
+
 load_dotenv()
 
 OPENSEA_API_KEY = os.getenv("OPENSEA_API_KEY")
@@ -461,6 +463,7 @@ async def heartbeat_loop(ws):
             {"topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": ref}
         ))
         ref += 1
+        write_heartbeat("opensea")
 
 
 def normalize_frame(parsed):

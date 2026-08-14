@@ -1,13 +1,19 @@
 #!/bin/bash
-# start.sh — runs discover.py, stream_opensea.py, and eth_mint_watcher.py
-# together in a single process, for a single combined Railway service.
+# start.sh — runs discover.py, stream_opensea.py, eth_mint_watcher.py,
+# and watchdog.py together in a single process, for a single combined
+# Railway service.
 #
 # Each script gets its own supervisory loop:
-#   - stream_opensea.py / eth_mint_watcher.py are meant to run forever.
-#     If either one crashes for any reason, its loop restarts it after
-#     a short pause, rather than the whole container going down.
+#   - stream_opensea.py / eth_mint_watcher.py / watchdog.py are meant
+#     to run forever. If any one crashes for any reason, its loop
+#     restarts it after a short pause, rather than the whole
+#     container going down.
 #   - discover.py is meant to run once and exit (that's correct
 #     behavior, not a crash) — its loop re-runs it once every 24 hours.
+#
+# watchdog.py reads heartbeats.json (written by the other three via
+# heartbeat.py) and posts a Discord alert if any source goes silent
+# longer than expected.
 #
 # All three share this container's filesystem, so the existing
 # projects.json + lock-file coordination between them works exactly
@@ -26,7 +32,7 @@ supervise_persistent() {
 
     while true; do
         echo "[supervisor] Starting $name..."
-        python3 "$script"
+        python3 -u "$script"
         exit_code=$?
         echo "[supervisor] $name exited (code $exit_code) — restarting in 10s..."
         sleep 10
@@ -36,7 +42,7 @@ supervise_persistent() {
 supervise_daily() {
     while true; do
         echo "[supervisor] Running discover.py..."
-        python3 discover.py
+        python3 -u discover.py
         echo "[supervisor] discover.py finished — sleeping 24h until next run..."
         sleep 86400
     done
@@ -44,6 +50,7 @@ supervise_daily() {
 
 supervise_persistent "stream_opensea" "stream_opensea.py" &
 supervise_persistent "eth_mint_watcher" "eth_mint_watcher.py" &
+supervise_persistent "watchdog" "watchdog.py" &
 supervise_daily &
 
 # Each loop above is infinite under normal operation, so this should

@@ -77,6 +77,8 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from heartbeat import write_heartbeat
+
 load_dotenv()
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -448,6 +450,8 @@ def poll_once(chain):
     if latest_block is None:
         print(f"[eth_mint_watcher] [{chain['key']}] Couldn't fetch latest block — skipping.")
         return
+
+    write_heartbeat(f"eth_{chain['key']}")
 
     if chain_state["last_block"] is None:
         chain_state["last_block"] = latest_block

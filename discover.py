@@ -12,6 +12,8 @@ from status import get_project_status
 
 from alerts import send_discord_alert
 
+from heartbeat import write_heartbeat
+
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -228,6 +230,9 @@ def main():
         f"Total projects saved: "
         f"{len(all_projects)}"
     )
+
+
+    write_heartbeat("discover")
 
 
 if __name__ == "__main__":
