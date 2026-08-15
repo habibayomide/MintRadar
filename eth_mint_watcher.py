@@ -35,7 +35,7 @@ HOW IT WORKS (same logic for every configured chain):
    (kept separately per chain). This counts mints WE'VE OBSERVED since
    this script started watching that chain, not the contract's
    lifetime total.
-3. The first time a contract's count crosses MINT_COUNT_THRESHOLD:
+3. The first time a contract's count crosses its chain's mint_threshold
    - Check ONCE whether it's source-verified (skip if not, and never
      re-check that contract again).
    - Check ONCE whether it was actually deployed recently
@@ -84,7 +84,6 @@ load_dotenv()
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 POLL_INTERVAL_SECONDS = 20
-MINT_COUNT_THRESHOLD = 30
 MAX_CONTRACT_AGE_HOURS = float(os.getenv("MAX_CONTRACT_AGE_HOURS", "12"))
 
 ZERO_ADDRESS_TOPIC = "0x" + "0" * 64
@@ -111,6 +110,8 @@ CHAINS = [
         "api_key": os.getenv("ETHERSCAN_API_KEY"),
         "explorer_url": "https://etherscan.io/address/{address}",
         "embed_color": 0x21325B,
+        "verified_mint_threshold": int(os.getenv("ETHEREUM_VERIFIED_MINT_THRESHOLD", "30")),
+        "unverified_mint_threshold": int(os.getenv("ETHEREUM_UNVERIFIED_MINT_THRESHOLD", "60")),
     },
     {
         "key": "robinhood",
@@ -126,12 +127,14 @@ CHAINS = [
         "api_key": os.getenv("ROBINHOOD_API_KEY"),
         "explorer_url": "https://robinhoodchain.blockscout.com/address/{address}",
         "embed_color": 0x00C805,  # Robinhood's brand green
+        "verified_mint_threshold": int(os.getenv("ROBINHOOD_VERIFIED_MINT_THRESHOLD", "5")),
+        "unverified_mint_threshold": int(os.getenv("ROBINHOOD_UNVERIFIED_MINT_THRESHOLD", "15")),
     },
 ]
 
 
 def _empty_chain_state():
-    return {"last_block": None, "counts": {}, "checked": []}
+    return {"last_block": None, "counts": {}, "checked": [], "pending_unverified": []}
 
 
 def load_state():
@@ -152,6 +155,7 @@ def save_state(state):
 STATE = load_state()
 for chain in CHAINS:
     STATE.setdefault(chain["key"], _empty_chain_state())
+    STATE[chain["key"]].setdefault("pending_unverified", [])  # migrate older state files
 
 
 def api_get(chain, params, retries=3):
@@ -358,7 +362,7 @@ def send_instant_alert(chain, project):
         "fields": [
             {"name": "⛓️ Chain", "value": chain["label"], "inline": True},
             {"name": "🏷️ Standard", "value": project.get("token_standard", "Unknown"), "inline": True},
-            {"name": "✅ Verified", "value": "Yes", "inline": True},
+            {"name": "✅ Verified", "value": "Yes" if project.get("verified") else "No", "inline": True},
             {"name": "📜 Contract", "value": f"`{project['contract_address']}`", "inline": False},
         ],
         "footer": {"text": f"MintRadar • {chain['label']}"},
@@ -397,25 +401,56 @@ def process_mint_log(chain, log, standard):
     chain_state = STATE[chain["key"]]
 
     if contract_address in chain_state["checked"]:
-        return
+        return  # already fully resolved (alerted or rejected)
 
     chain_state["counts"][contract_address] = chain_state["counts"].get(contract_address, 0) + 1
+    count = chain_state["counts"][contract_address]
 
-    if chain_state["counts"][contract_address] < MINT_COUNT_THRESHOLD:
-        return
+    verified_threshold = chain["verified_mint_threshold"]
+    unverified_threshold = chain["unverified_mint_threshold"]
 
-    chain_state["checked"].append(contract_address)
+    is_verified = None
+    contract_name = "Unknown"
 
-    is_verified, contract_name = check_verification(chain, contract_address)
+    if contract_address in chain_state["pending_unverified"]:
+        # Already known unverified from an earlier check — just
+        # waiting for it to reach the higher bar. Don't re-check
+        # verification on every mint in between; that's what the
+        # first check already told us.
+        if count < unverified_threshold:
+            return
 
-    if not is_verified:
-        print(f"[eth_mint_watcher] [{chain['key']}] {contract_address} crossed "
-              f"{MINT_COUNT_THRESHOLD} mints but isn't source-verified — skipping.")
-        return
+        chain_state["checked"].append(contract_address)
+        chain_state["pending_unverified"].remove(contract_address)
+        # Re-check now, purely so the alert shows accurate current
+        # status — it verifying in the meantime is a nice bonus, but
+        # the decision to proceed no longer depends on it either way.
+        is_verified, contract_name = check_verification(chain, contract_address)
+
+    else:
+        if count < verified_threshold:
+            return  # hasn't even hit the lower bar yet
+
+        is_verified, contract_name = check_verification(chain, contract_address)
+
+        if is_verified:
+            chain_state["checked"].append(contract_address)
+        elif count >= unverified_threshold:
+            # Rare: count already jumped past the higher bar before we
+            # even got to check it once (bursty minting).
+            chain_state["checked"].append(contract_address)
+        else:
+            print(f"[eth_mint_watcher] [{chain['key']}] {contract_address} crossed "
+                  f"{verified_threshold} mints but isn't verified — waiting for "
+                  f"{unverified_threshold} mints instead of rejecting outright.")
+            chain_state["pending_unverified"].append(contract_address)
+            return
+
+    threshold_used = verified_threshold if is_verified else unverified_threshold
 
     if not is_contract_actually_new(chain, contract_address):
         print(f"[eth_mint_watcher] [{chain['key']}] {contract_address} crossed "
-              f"{MINT_COUNT_THRESHOLD} mints but was deployed more than "
+              f"{threshold_used} mints but was deployed more than "
               f"{MAX_CONTRACT_AGE_HOURS}h ago — skipping.")
         return
 
@@ -430,14 +465,14 @@ def process_mint_log(chain, log, standard):
         "contract_address": contract_address,
         "token_standard": standard,
         "launch_datetime": datetime.now(timezone.utc).isoformat(),
-        "description": f"{standard} contract crossed {MINT_COUNT_THRESHOLD} "
-                        f"observed mints, source-verified.",
-        "verified": True,
+        "description": f"{standard} contract crossed {threshold_used} "
+                        f"observed mints{', source-verified' if is_verified else ' (unverified)'}.",
+        "verified": is_verified,
         "status": "live",
     }
 
     print(f"[eth_mint_watcher] [{chain['key']}] New contract detected: "
-          f"{display_name} ({contract_address})")
+          f"{display_name} ({contract_address}) — verified={is_verified}")
 
     append_project(project)
     send_instant_alert(chain, project)
@@ -497,10 +532,14 @@ def run():
               "ROBINHOOD_API_KEY to .env.")
         return
 
+    thresholds = ", ".join(
+        f"{c['label']}={c['verified_mint_threshold']}v/{c['unverified_mint_threshold']}u"
+        for c in active_chains
+    )
     print(f"[eth_mint_watcher] Starting watcher for: "
           f"{', '.join(c['label'] for c in active_chains)} "
           f"(poll every {POLL_INTERVAL_SECONDS}s, "
-          f"threshold {MINT_COUNT_THRESHOLD} mints, verified-only)...")
+          f"mint thresholds: {thresholds}, verified-only)...")
 
     while True:
         for chain in active_chains:
