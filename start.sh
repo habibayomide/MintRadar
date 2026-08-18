@@ -26,6 +26,17 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
+cleanup() {
+    echo ""
+    echo "[supervisor] Shutting down — stopping all processes..."
+    kill 0 2>/dev/null  # signal the whole process group: all supervisor
+                         # loops and whichever scripts they're currently
+                         # running, so nothing gets auto-restarted after
+                         # a deliberate Ctrl+C
+    exit 0
+}
+trap cleanup SIGINT SIGTERM
+
 supervise_persistent() {
     local name="$1"
     local script="$2"
