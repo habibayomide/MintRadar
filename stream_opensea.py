@@ -159,11 +159,13 @@ def matches_excluded_keyword(*texts):
     return any(keyword in combined for keyword in EXCLUDE_KEYWORDS)
 
 
-# Chains to skip alerting on entirely (case-insensitive match against
-# OpenSea's chain.name). "matic" is included defensively since Polygon
-# is sometimes labeled that way instead of "polygon" depending on the
-# API surface.
-EXCLUDED_CHAINS = {"polygon", "matic"}
+# Only these chains are alerted on — everything else (Arbitrum, Solana,
+# Monad, Polygon, etc.) is now filtered out. Case-insensitive match
+# against OpenSea's chain.name. "matic" included defensively since
+# Polygon is sometimes labeled that way instead of "polygon" depending
+# on the API surface — kept here even though Polygon isn't in the
+# allowlist anyway, in case the underlying values ever shift around.
+ALLOWED_CHAINS = {"robinhood", "ethereum", "base"}
 
 
 def get_collection_info(collection_slug):
@@ -407,9 +409,10 @@ def handle_item_transferred(frame):
     SEEN_COLLECTIONS.add(collection_slug)
     save_seen_collections(SEEN_COLLECTIONS)
 
-    if chain.lower() in EXCLUDED_CHAINS:
-        print(f"[stream_opensea] '{collection_slug}' is on an excluded "
-              f"chain ({chain}) — skipping.")
+    if chain.lower() not in ALLOWED_CHAINS:
+        print(f"[stream_opensea] '{collection_slug}' is on {chain}, which "
+              f"isn't in the allowed chain list (RH/ETH/Base only) — "
+              f"skipping.")
         return
 
     if matches_excluded_keyword(collection_slug, item_name):
