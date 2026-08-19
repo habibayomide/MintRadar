@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 
 from sources.nftcalendar import (
-    discover_projects as discover_nftcalendar
+    discover_projects as discover_nftcalendar,
+    fetch_twitter_link,
 )
 
 from filters import filter_projects
@@ -189,6 +190,13 @@ def main():
             # Alerting on every one of those would spam Discord with
             # empty "No upcoming mints found" messages.
             if project.get("status") == "upcoming":
+
+                # Extra page fetch per project, so only do it for ones
+                # we're actually about to alert on — not every new
+                # entry, and never for ones we already know about.
+                twitter_url = fetch_twitter_link(url)
+                if twitter_url:
+                    project["twitter_url"] = twitter_url
 
                 newly_upcoming.append(project)
 

@@ -99,6 +99,51 @@ RELATIVE_TIME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Matches an actual profile URL (twitter.com/username or x.com/username)
+# — deliberately requires the path to be JUST a username with nothing
+# else, since sites commonly also have "share this on Twitter" buttons
+# (twitter.com/intent/tweet?...) that we do NOT want to mistake for the
+# collection's real profile link.
+TWITTER_PROFILE_PATTERN = re.compile(
+    r"^https?://(www\.)?(twitter\.com|x\.com)/([A-Za-z0-9_]+)/?(\?.*)?$"
+)
+EXCLUDED_TWITTER_PATHS = {
+    "intent", "share", "home", "search", "compose", "i", "hashtag", "login"
+}
+
+
+def fetch_twitter_link(event_url):
+    """
+    Fetches an NFTCalendar event's own detail page and looks for a link
+    to the collection's actual X/Twitter profile. Not fetched during
+    the main listing scrape (extra request per project) — call this
+    only for genuinely new projects, not ones we already know about.
+
+    Returns the profile URL, or None if not found or the fetch fails.
+    """
+
+    get_kwargs = {"headers": HEADERS, "timeout": REQUEST_TIMEOUT}
+    if _IMPERSONATE:
+        get_kwargs["impersonate"] = _IMPERSONATE
+
+    try:
+        response = _SESSION.get(event_url, **get_kwargs)
+        response.raise_for_status()
+    except Exception as error:
+        print(f"[nftcalendar] Twitter link fetch failed for {event_url}: {error}")
+        return None
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"]
+        match = TWITTER_PROFILE_PATTERN.match(href)
+
+        if match and match.group(3).lower() not in EXCLUDED_TWITTER_PATHS:
+            return href
+
+    return None
+
 
 def _parse_end_date(text):
     """

@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from datetime import datetime, timezone
 import requests
 
 from dotenv import load_dotenv
@@ -19,25 +20,52 @@ DISCORD_WEBHOOK_URL = os.getenv(
 MAX_CHUNK_LENGTH = 1900  # stay comfortably under Discord's 2000-char cap
 
 
+def _format_discord_timestamp(launch_datetime):
+    """
+    Converts an ISO 8601 string into Discord's native <t:UNIX:f> markup,
+    which Discord renders as a properly formatted, localized date/time
+    for each viewer — works in plain message content, not just embeds.
+    Falls back to the raw string if it can't be parsed.
+    """
+
+    if not launch_datetime or launch_datetime == "Unknown":
+        return "Unknown"
+
+    try:
+        parsed = datetime.fromisoformat(launch_datetime.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        unix_ts = int(parsed.timestamp())
+        return f"<t:{unix_ts}:f>"
+    except (ValueError, AttributeError):
+        return launch_datetime
+
+
 def _format_project_block(index, project):
 
     name = project.get("name", "Unknown Project")
-    launch_datetime = project.get("launch_datetime", "Unknown")
+    launch_display = _format_discord_timestamp(project.get("launch_datetime"))
     price = project.get("price")
     currency = project.get("currency")
     url = project.get("url", "")
+    twitter_url = project.get("twitter_url")
 
     if price is not None:
         price_text = f"{price} {currency}" if currency else str(price)
     else:
         price_text = "Unknown"
 
-    return (
+    block = (
         f"**{index}. {name}**\n"
-        f"🕒 {launch_datetime}\n"
+        f"🕒 {launch_display}\n"
         f"💰 {price_text}\n"
-        f"🔗 {url}\n\n"
+        f"🔗 {url}\n"
     )
+
+    if twitter_url:
+        block += f"🐦 {twitter_url}\n"
+
+    return block + "\n"
 
 
 def build_discord_message(projects):
