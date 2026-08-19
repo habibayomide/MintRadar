@@ -173,13 +173,16 @@ def get_collection_info(collection_slug):
     Stream API only gives us the individual token's metadata name
     (often just "#1089"), not the collection's actual name.
 
-    Returns (is_new: bool, name: str | None, description: str). Fails
-    OPEN on is_new (True) if the lookup fails — better to occasionally
-    alert on an old collection than to silently swallow a real new one.
+    Returns (is_new: bool, name: str | None, description: str,
+    has_twitter: bool). Fails OPEN on is_new (True) if the lookup fails
+    — better to occasionally alert on an old collection than to
+    silently swallow a real new one. has_twitter defaults to False on
+    lookup failure (safest default: don't bypass the age filter based
+    on data we don't actually have).
     """
 
     if not OPENSEA_API_KEY:
-        return True, None, ""
+        return True, None, "", False
 
     data = None
     last_error = None
@@ -212,10 +215,19 @@ def get_collection_info(collection_slug):
         print(f"[stream_opensea] Collection lookup failed for "
               f"'{collection_slug}' after retries: {last_error} — "
               f"alerting anyway.")
-        return True, None, ""
+        return True, None, "", False
 
     collection_name = data.get("name")
     description = data.get("description") or ""
+
+    # Field name unverified live (same caveat as created_date/description
+    # above) — checking a few likely candidates, including a possible
+    # nested "socials" structure.
+    has_twitter = bool(
+        data.get("twitter_username")
+        or data.get("twitter")
+        or (isinstance(data.get("socials"), dict) and data["socials"].get("twitter"))
+    )
 
     created_raw = None
     for field in _CREATED_DATE_FIELDS:
@@ -229,7 +241,7 @@ def get_collection_info(collection_slug):
               f"{_CREATED_DATE_FIELDS}) — alerting anyway. If this "
               f"collection is actually old, tell me the field name from "
               f"the real response and I'll fix the check.")
-        return True, collection_name, description
+        return True, collection_name, description, has_twitter
 
     try:
         created_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
@@ -238,11 +250,13 @@ def get_collection_info(collection_slug):
     except (ValueError, AttributeError):
         print(f"[stream_opensea] Couldn't parse creation date "
               f"'{created_raw}' for '{collection_slug}' — alerting anyway.")
-        return True, collection_name, description
+        return True, collection_name, description, has_twitter
 
     age_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
 
-    return age_hours <= NEW_COLLECTION_MAX_AGE_HOURS, collection_name, description
+    is_new = age_hours <= NEW_COLLECTION_MAX_AGE_HOURS
+
+    return is_new, collection_name, description, has_twitter
 
 
 # ---------------------------------------------------------------------
@@ -403,13 +417,18 @@ def handle_item_transferred(frame):
               f"keyword (LP position / badge) — skipping.")
         return
 
-    is_new, collection_name, description = get_collection_info(collection_slug)
+    is_new, collection_name, description, has_twitter = get_collection_info(collection_slug)
 
-    if not is_new:
+    if not is_new and not has_twitter:
         print(f"[stream_opensea] '{collection_slug}' minted, but isn't "
               f"a new collection (older than {NEW_COLLECTION_MAX_AGE_HOURS}h) "
-              f"— skipping alert.")
+              f"and has no linked X profile to justify the exception — "
+              f"skipping alert.")
         return
+    elif not is_new and has_twitter:
+        print(f"[stream_opensea] '{collection_slug}' is older than "
+              f"{NEW_COLLECTION_MAX_AGE_HOURS}h but has a linked X profile "
+              f"— likely a phased mint, allowing it through.")
 
     if not passes_quality_bar(chain, description):
         print(f"[stream_opensea] '{collection_slug}' on {chain} has no "

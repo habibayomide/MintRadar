@@ -110,7 +110,7 @@ CHAINS = [
         "api_key": os.getenv("ETHERSCAN_API_KEY"),
         "explorer_url": "https://etherscan.io/address/{address}",
         "embed_color": 0x21325B,
-        "verified_mint_threshold": int(os.getenv("ETHEREUM_VERIFIED_MINT_THRESHOLD", "30")),
+        "verified_mint_threshold": int(os.getenv("ETHEREUM_VERIFIED_MINT_THRESHOLD", "10")),
         "unverified_mint_threshold": int(os.getenv("ETHEREUM_UNVERIFIED_MINT_THRESHOLD", "60")),
     },
     {
