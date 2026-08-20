@@ -26,6 +26,17 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
+# Self-activate the venv, so this works correctly whether it's run
+# manually (where you've usually already activated it) or launched by
+# a system service — which starts fresh and does NOT inherit any
+# interactive shell's activated environment. Without this, python3
+# would silently resolve to the system's plain Python instead of the
+# one with all the required packages installed, and everything would
+# crash with ModuleNotFoundError.
+if [ -f "$(dirname "$0")/.venv/bin/activate" ]; then
+    source "$(dirname "$0")/.venv/bin/activate"
+fi
+
 cleanup() {
     echo ""
     echo "[supervisor] Shutting down — stopping all processes..."
