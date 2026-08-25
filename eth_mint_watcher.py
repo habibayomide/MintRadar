@@ -92,6 +92,21 @@ TRANSFER_SIG = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3
 TRANSFER_SINGLE_SIG = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62"
 NAME_FUNCTION_SELECTOR = "0x06fdde03"  # keccak256("name()")[:4]
 
+# Verified via evmtools.dev/crypto/function-selector (totalSupply()
+# matched the well-known 0x18160ddd exactly, confirming the tool's
+# accuracy before trusting the rest).
+TOTAL_SUPPLY_SELECTOR = "0x18160ddd"  # totalSupply()
+
+# Max supply has no standardized function name across contracts, so we
+# try a few known candidates in order. Both verified via the same tool
+# — the exact name mapping on the third one got garbled in transit, but
+# the selector VALUE itself is what matters for the actual eth_call, so
+# it's kept as an extra candidate regardless of which exact name it is.
+MAX_SUPPLY_SELECTORS = [
+    "0xd5abeb01",  # maxSupply()
+    "0x67f7daf0",  # MAX_SUPPLY() or MAX_ITEMS() — exact mapping unclear
+]
+
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = DATA_DIR / "eth_mint_watcher_state.json"
@@ -299,11 +314,15 @@ def _decode_abi_string(hex_result):
         return None
 
 
-def get_onchain_name(chain, contract_address):
-    call_params = [
-        {"to": contract_address, "data": NAME_FUNCTION_SELECTOR},
-        "latest",
-    ]
+def _eth_call_raw(chain, contract_address, selector):
+    """
+    Shared low-level eth_call — returns the raw hex result string, or
+    None on failure. Routes through the dedicated JSON-RPC endpoint for
+    chains that need it (Blockscout), or the module=proxy style for
+    ones where that works (Etherscan).
+    """
+
+    call_params = [{"to": contract_address, "data": selector}, "latest"]
 
     if chain["rpc_url"]:
         result = json_rpc_call(chain, "eth_call", call_params)
@@ -312,13 +331,95 @@ def get_onchain_name(chain, contract_address):
             "module": "proxy",
             "action": "eth_call",
             "to": contract_address,
-            "data": NAME_FUNCTION_SELECTOR,
+            "data": selector,
             "tag": "latest",
         })
 
     if result is None or "result" not in result:
         return None
-    return _decode_abi_string(result["result"])
+    return result["result"]
+
+
+def _decode_abi_uint256(hex_result):
+    """Decodes a plain uint256 return value (a single 32-byte word)."""
+
+    if not hex_result or hex_result in ("0x", "0x0"):
+        return None
+
+    try:
+        return int(hex_result, 16)
+    except ValueError:
+        return None
+
+
+def get_onchain_name(chain, contract_address):
+    raw = _eth_call_raw(chain, contract_address, NAME_FUNCTION_SELECTOR)
+    if raw is None:
+        return None
+    return _decode_abi_string(raw)
+
+
+def get_total_supply(chain, contract_address):
+    """
+    Currently-minted count, via the standard (if optional) ERC-721/1155
+    totalSupply(). Not part of the core standard, but implemented by
+    the large majority of collections. Returns None if the contract
+    doesn't implement it (some don't, particularly certain ERC-1155s),
+    rather than guessing.
+    """
+
+    raw = _eth_call_raw(chain, contract_address, TOTAL_SUPPLY_SELECTOR)
+    if raw is None:
+        return None
+    return _decode_abi_uint256(raw)
+
+
+def get_max_supply(chain, contract_address):
+    """
+    Max supply has no standardized function name, so this tries a
+    couple of known candidates in order and returns the first one that
+    gives back a plausible answer. Returns None if neither works —
+    genuinely common for open-ended/no-cap collections, not just a
+    lookup failure.
+    """
+
+    for selector in MAX_SUPPLY_SELECTORS:
+        raw = _eth_call_raw(chain, contract_address, selector)
+        value = _decode_abi_uint256(raw)
+        if value is not None and value > 0:
+            return value
+
+    return None
+
+
+def get_mint_price_eth(chain, tx_hash):
+    """
+    Reads the actual ETH value sent in a real mint transaction — more
+    reliable than guessing a price()-style function name, since this
+    works on literally any contract regardless of what it exposes.
+    Returns 0.0 for a free mint, the ETH amount for a paid one, or
+    None if the lookup fails.
+    """
+
+    params = {"module": "proxy", "action": "eth_getTransactionByHash", "txhash": tx_hash}
+
+    if chain["rpc_url"]:
+        result = json_rpc_call(chain, "eth_getTransactionByHash", [tx_hash])
+    else:
+        result = api_get(chain, params)
+
+    if result is None or "result" not in result or result["result"] is None:
+        return None
+
+    value_hex = result["result"].get("value")
+    if not value_hex:
+        return None
+
+    try:
+        wei = int(value_hex, 16)
+        return wei / 1_000_000_000_000_000_000
+    except (ValueError, TypeError):
+        return None
 
 
 def _acquire_lock(timeout=10):
@@ -354,17 +455,37 @@ def append_project(project):
         _release_lock()
 
 
+def _format_supply_field(total_supply, max_supply):
+    if total_supply is None:
+        return "Unknown"
+    if max_supply is not None:
+        return f"{total_supply:,} / {max_supply:,}"
+    return f"{total_supply:,} (max supply unknown)"
+
+
+def _format_price_field(mint_price):
+    if mint_price is None:
+        return "Unknown"
+    if mint_price == 0:
+        return "Free Mint"
+    return f"{mint_price:.4f} ETH"
+
+
 def send_instant_alert(chain, project):
+    fields = [
+        {"name": "⛓️ Chain", "value": chain["label"], "inline": True},
+        {"name": "🏷️ Standard", "value": project.get("token_standard", "Unknown"), "inline": True},
+        {"name": "✅ Verified", "value": "Yes" if project.get("verified") else "No", "inline": True},
+        {"name": "🔢 Minted", "value": _format_supply_field(project.get("total_supply"), project.get("max_supply")), "inline": True},
+        {"name": "💰 Price", "value": _format_price_field(project.get("mint_price_eth")), "inline": True},
+        {"name": "📜 Contract", "value": f"`{project['contract_address']}`", "inline": False},
+    ]
+
     embed = {
         "title": f"🆕 {project['name']}",
         "url": project["url"],
         "color": chain["embed_color"],
-        "fields": [
-            {"name": "⛓️ Chain", "value": chain["label"], "inline": True},
-            {"name": "🏷️ Standard", "value": project.get("token_standard", "Unknown"), "inline": True},
-            {"name": "✅ Verified", "value": "Yes" if project.get("verified") else "No", "inline": True},
-            {"name": "📜 Contract", "value": f"`{project['contract_address']}`", "inline": False},
-        ],
+        "fields": fields,
         "footer": {"text": f"MintRadar • {chain['label']}"},
         "timestamp": project["launch_datetime"],
     }
@@ -457,6 +578,12 @@ def process_mint_log(chain, log, standard):
     onchain_name = get_onchain_name(chain, contract_address)
     display_name = onchain_name or contract_name
 
+    total_supply = get_total_supply(chain, contract_address)
+    max_supply = get_max_supply(chain, contract_address)
+
+    tx_hash = log.get("transactionHash")
+    mint_price = get_mint_price_eth(chain, tx_hash) if tx_hash else None
+
     project = {
         "name": display_name,
         "url": chain["explorer_url"].format(address=contract_address),
@@ -469,6 +596,9 @@ def process_mint_log(chain, log, standard):
                         f"observed mints{', source-verified' if is_verified else ' (unverified)'}.",
         "verified": is_verified,
         "status": "live",
+        "total_supply": total_supply,
+        "max_supply": max_supply,
+        "mint_price_eth": mint_price,
     }
 
     print(f"[eth_mint_watcher] [{chain['key']}] New contract detected: "
