@@ -8,10 +8,10 @@ from stream_opensea.py (which gets events pushed to it); neither
 Etherscan nor Blockscout offer a push/webhook option, so this polls on
 an interval instead.
 
-Currently watches: Ethereum (via Etherscan) and Robinhood Chain (via
-Blockscout — Etherscan doesn't index Robinhood Chain at all). Base can
-be added later as one more entry in CHAINS below, since it uses the
-same Etherscan API as Ethereum, just a different chain ID.
+Currently watches: Ethereum (via Etherscan), Robinhood Chain, and Ink
+(both via Blockscout — Etherscan doesn't index either). Base can be
+added later as one more entry in CHAINS below, since it uses the same
+Etherscan API as Ethereum, just a different chain ID.
 
 Run it in its own terminal/session, separate from discover.py and
 stream_opensea.py:
@@ -29,15 +29,18 @@ HOW IT WORKS (same logic for every configured chain):
      this check we'd alert on every new memecoin too.
    - ERC-1155 mints: TransferSingle(...) where topic2 (from — NOT
      topic1, operator is topic1 for this event) is the zero address.
-     (TransferBatch, used for admin/airdrop-style multi-mints, is not
-     covered yet — most first-ever mints are single-token calls.)
 2. For every mint seen, increment a persisted per-contract counter
    (kept separately per chain). This counts mints WE'VE OBSERVED since
    this script started watching that chain, not the contract's
    lifetime total.
-3. The first time a contract's count crosses its chain's mint_threshold
-   - Check ONCE whether it's source-verified (skip if not, and never
-     re-check that contract again).
+3. The first time a contract's count crosses its chain's
+   verified_mint_threshold:
+   - Check ONCE whether it's source-verified.
+     - If verified: proceed to alert (subject to the age check below).
+     - If NOT verified: don't reject outright — wait instead for the
+       higher unverified_mint_threshold, giving genuinely new
+       (just-not-yet-verified) projects a fair chance instead of
+       silently dropping them due to timing.
    - Check ONCE whether it was actually deployed recently
      (MAX_CONTRACT_AGE_HOURS) — without this, an old-but-currently-busy
      contract (e.g. ENS's registrar, which mints constantly as people
@@ -47,25 +50,40 @@ HOW IT WORKS (same logic for every configured chain):
      project name, since verified "ContractName" is often just a
      shared template's class name (e.g. "ERC721SeaDrop" — hundreds of
      different projects use that same template).
+   - Read totalSupply() for currently-minted count, and try a couple
+     of known candidate selectors for max supply (no standardized
+     function name exists for this across contracts).
+   - Read the actual ETH value sent in the mint transaction that
+     crossed the threshold, to show free-vs-paid and the real price —
+     more reliable than guessing a price()-style function name, since
+     this works regardless of what the contract exposes.
 
 CHAIN BACKENDS:
 Etherscan (Ethereum, and Base if added later) uses their unified V2
 API — one base URL, chain selected via a `chainid` query param.
-Blockscout (Robinhood Chain) uses the older Etherscan-COMPATIBLE
-classic API style (same module=/action= parameters), but each
-Blockscout instance is already chain-specific by its base URL, so no
-chainid param is needed or accepted. Both need their own API key —
-Etherscan's and Blockscout's keys are NOT interchangeable.
+Blockscout (Robinhood Chain, Ink) uses the newer Pro API style — same
+module=/action= parameters for logs/contract lookups, but with
+`chain_id` (underscore, NOT the same as Etherscan's `chainid`) as the
+selector param, and a SEPARATE dedicated JSON-RPC endpoint (with
+Bearer auth) for eth_blockNumber/eth_call specifically, since
+module=proxy isn't supported there (confirmed live: "Unknown module").
+Ink shares the exact same Blockscout Pro account/key as Robinhood —
+confirmed via a live test with the real key.
 
 CAVEATS:
-- I don't have network access in my sandbox. Ethereum's logic has been
-  confirmed against real runs already; Robinhood/Blockscout is new and
-  untested against a live connection — same caveat as always applied
-  to every new source when we first turn it on.
+- I don't have network access in my sandbox. Ethereum and Robinhood's
+  logic have been confirmed against real runs already; Ink is new and
+  built on the same confirmed-working pattern, but hasn't had its own
+  live run yet — same caveat as always applied to any new source when
+  first turned on.
 - Etherscan/Blockscout log endpoints cap results at 1000 per call and
   5000 blocks per range. At a short poll interval this shouldn't
   matter in normal operation, but a long downtime on restart could hit
   those caps — full pagination isn't implemented for the initial cut.
+- totalSupply() and the max-supply guesses won't work on every
+  contract (some don't implement them, particularly some ERC-1155s,
+  since supply there is per-token-ID) — shows "Unknown" rather than a
+  wrong number when that happens.
 """
 
 import json
@@ -144,6 +162,27 @@ CHAINS = [
         "embed_color": 0x00C805,  # Robinhood's brand green
         "verified_mint_threshold": int(os.getenv("ROBINHOOD_VERIFIED_MINT_THRESHOLD", "5")),
         "unverified_mint_threshold": int(os.getenv("ROBINHOOD_UNVERIFIED_MINT_THRESHOLD", "15")),
+    },
+    {
+        "key": "ink",
+        "label": "Ink",
+        "api_base": "https://api.blockscout.com/v2/api",
+        "chain_id": 57073,
+        "chain_id_param": "chain_id",  # same Blockscout Pro network as Robinhood,
+                                         # confirmed via live curl test — same key works
+        "rpc_url": "https://api.blockscout.com/57073/json-rpc",  # same reasoning
+                    # as Robinhood: module=proxy isn't supported on this network's
+                    # regular endpoint, eth_blockNumber/eth_call need the
+                    # dedicated per-chain JSON-RPC path instead.
+        "api_key": os.getenv("INK_API_KEY", os.getenv("ROBINHOOD_API_KEY")),
+                    # defaults to reusing your existing Robinhood key, since
+                    # it's confirmed to work for Ink too (same Blockscout
+                    # Pro account) — set INK_API_KEY separately only if
+                    # you ever want to use a different key for it.
+        "explorer_url": "https://explorer.inkonchain.com/address/{address}",
+        "embed_color": 0x6E56CF,  # Ink's purple brand color
+        "verified_mint_threshold": int(os.getenv("INK_VERIFIED_MINT_THRESHOLD", "10")),
+        "unverified_mint_threshold": int(os.getenv("INK_UNVERIFIED_MINT_THRESHOLD", "30")),
     },
 ]
 

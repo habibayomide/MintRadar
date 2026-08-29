@@ -165,7 +165,7 @@ def matches_excluded_keyword(*texts):
 # Polygon is sometimes labeled that way instead of "polygon" depending
 # on the API surface — kept here even though Polygon isn't in the
 # allowlist anyway, in case the underlying values ever shift around.
-ALLOWED_CHAINS = {"robinhood", "ethereum", "base"}
+ALLOWED_CHAINS = {"robinhood", "ethereum", "base", "ink"}
 
 
 def get_collection_info(collection_slug):
